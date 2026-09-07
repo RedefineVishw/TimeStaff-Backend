@@ -1,8 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -10,4 +8,48 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks Task[]
+}
+
+model Task {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  timeEntries TimeEntry[]
+
+  @@index([projectId])
+}
+
+model TimeEntry {
+  id              String    @id @default(cuid())
+  // Placeholder for future auth — unused for now, kept nullable so a real
+  // user id can be filled in later without a schema migration.
+  userId          String?
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationSeconds Int       @default(0)
+  // Which client wrote this entry: "web" (manual edit) or "desktop" (timer).
+  source          String    @default("web")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([endedAt])
 }

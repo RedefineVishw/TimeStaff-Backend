@@ -7,6 +7,8 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // CLI-only connection (migrate/studio). The running app uses DATABASE_URL
+    // (pooled) via its own driver adapter, wired up separately.
+    url: process.env["DIRECT_URL"],
   },
 });
