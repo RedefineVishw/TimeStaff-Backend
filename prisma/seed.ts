@@ -1,7 +1,7 @@
 // One-off local seed script — not wired into the app.
 // Run with: npx tsx prisma/seed.ts
 import "dotenv/config";
-import { PrismaClient } from "../generated/prisma/client.js";
+import { PrismaClient } from "../src/generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const adapter = new PrismaPg({ connectionString: process.env["DATABASE_URL"] });
