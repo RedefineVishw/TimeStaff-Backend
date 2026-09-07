@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
 import { TimerService } from './timer.service.js';
 import { StartTimerDto } from './dto/start-timer.dto.js';
+import { StopTimerDto } from './dto/stop-timer.dto.js';
 
 @Controller('timer')
 export class TimerController {
@@ -17,8 +18,8 @@ export class TimerController {
   }
 
   @Post('stop')
-  stop() {
-    return this.timerService.stop();
+  stop(@Body() dto: StopTimerDto) {
+    return this.timerService.stop(dto.endedAt);
   }
 
   @Patch('tick')

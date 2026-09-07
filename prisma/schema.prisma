@@ -53,3 +53,14 @@ model TimeEntry {
   @@index([taskId])
   @@index([endedAt])
 }
+
+model AppSettings {
+  // Single-row config table — no auth/users yet, so this is one global
+  // setting rather than per-user. "singleton" is a fixed id, not generated,
+  // so there is never more than one row to look up.
+  id                 String   @id @default("singleton")
+  // How many minutes of no keyboard/mouse activity before the desktop app
+  // auto-stops the running timer and discards that idle stretch.
+  idleTimeoutMinutes Int      @default(5)
+  updatedAt          DateTime @updatedAt
+}

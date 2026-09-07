@@ -30,12 +30,12 @@ export class TimerService {
     });
   }
 
-  async stop() {
+  async stop(endedAtOverride?: string) {
     const running = await this.prisma.timeEntry.findFirst({ where: { endedAt: null } });
     if (!running) {
       throw new NotFoundException('No timer is currently running');
     }
-    return this.closeEntry(running.id, running.startedAt);
+    return this.closeEntry(running.id, running.startedAt, endedAtOverride);
   }
 
   /** Desktop app calls this once a second while a timer is running. */
@@ -58,8 +58,17 @@ export class TimerService {
     }
   }
 
-  private closeEntry(id: string, startedAt: Date) {
-    const endedAt = new Date();
+  private closeEntry(id: string, startedAt: Date, endedAtOverride?: string) {
+    const now = new Date();
+    // Clamp any caller-supplied stop time to a sane range — never before the
+    // entry started, never after "now" — so a bad value can't corrupt duration.
+    let endedAt = now;
+    if (endedAtOverride) {
+      const requested = new Date(endedAtOverride);
+      if (requested.getTime() > startedAt.getTime() && requested.getTime() < now.getTime()) {
+        endedAt = requested;
+      }
+    }
     const durationSeconds = Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000);
     return this.prisma.timeEntry.update({
       where: { id },
