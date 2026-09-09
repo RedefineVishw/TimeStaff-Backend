@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,57 +7,297 @@ datasource db {
   provider = "postgresql"
 }
 
-model Project {
-  id        String   @id @default(cuid())
+model SuperAdmin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  createdAt    DateTime @default(now())
+}
+
+model Organization {
+  id        String @id @default(uuid())
   name      String
-  color     String?
+  slug      String @unique
+  ownerId   String @unique
+
+  status    OrganizationStatus @default(ACTIVE)
   createdAt DateTime @default(now())
+  createdBy String
   updatedAt DateTime @updatedAt
+  updatedBy String
 
-  tasks Task[]
+  owner     User @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  users     User[] @relation("OrganizationUsers")
+  subscriptions Subscription[]
+  payments  Payment[]
+  // Custom plans negotiated for this org only — never set for PUBLIC plans.
+  customPlans Plan[]
 }
 
-model Task {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  timeEntries TimeEntry[]
-
-  @@index([projectId])
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
 }
 
-model TimeEntry {
-  id              String    @id @default(cuid())
-  // Placeholder for future auth — unused for now, kept nullable so a real
-  // user id can be filled in later without a schema migration.
-  userId          String?
-  startedAt       DateTime
-  endedAt         DateTime?
-  durationSeconds Int       @default(0)
-  // Which client wrote this entry: "web" (manual edit) or "desktop" (timer).
-  source          String    @default("web")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+model User{
+  id                 String   @id @default(uuid())
+  organizationId     String
+  roleId             String
 
-  taskId String
-  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  email              String   @unique
+  passwordHash       String
 
-  @@index([taskId])
-  @@index([endedAt])
-}
+  firstName          String
+  lastName           String
+  displayName        String?
 
-model AppSettings {
-  // Single-row config table — no auth/users yet, so this is one global
-  // setting rather than per-user. "singleton" is a fixed id, not generated,
-  // so there is never more than one row to look up.
-  id                 String   @id @default("singleton")
-  // How many minutes of no keyboard/mouse activity before the desktop app
-  // auto-stops the running timer and discards that idle stretch.
-  idleTimeoutMinutes Int      @default(5)
+  phone              String?
+  avatarUrl          String?
+
+  timezone           String   @default("UTC")
+  locale             String   @default("en")
+
+  isActive           Boolean  @default(true)
+  emailVerified      Boolean  @default(false)
+  emailVerifiedAt    DateTime?
+
+  lastLoginAt        DateTime?
+  lastLoginIp        String?
+
+  passwordChangedAt  DateTime?
+
+  createdAt          DateTime @default(now())
+  createdBy          String?
   updatedAt          DateTime @updatedAt
+  updatedBy          String?
+
+  organization       Organization @relation("OrganizationUsers", fields: [organizationId], references: [id])
+  role               Role @relation(fields: [roleId], references: [id])
+  // Opposite side of Organization.owner — only set for the one user who owns an org.
+  ownedOrganization  Organization? @relation("OrganizationOwner")
+
+  @@index([organizationId])
+  @@index([roleId])
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+
+  createdAt   DateTime @default(now())
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@unique([roleId, permissionId])
+}
+
+model Plan {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  description  String?
+
+  basePrice    Decimal  @db.Decimal(10, 2)
+  currency     String   @default("USD")
+  billingCycle BillingCycle
+
+  isActive     Boolean  @default(true)
+
+  // PUBLIC: visible to every organization, activates directly.
+  // CUSTOM: visible/purchasable only by organizationId below.
+  visibility     PlanVisibility @default(PUBLIC)
+  // Set only when visibility = CUSTOM — the one org this plan was negotiated for.
+  organizationId String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  entitlements       PlanEntitlement[]
+  subscriptions      Subscription[]
+  organization       Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum PlanVisibility {
+  PUBLIC
+  CUSTOM
+}
+
+model PlanEntitlement {
+  id        String   @id @default(uuid())
+  planId    String
+
+  feature   String
+  value     String
+
+  plan      Plan     @relation(fields: [planId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([planId, feature])
+}
+
+model Subscription {
+  id                     String   @id @default(uuid())
+  organizationId         String
+  planId                 String
+
+  status                 SubscriptionStatus
+  billingCycle           BillingCycle
+
+  basePrice              Decimal  @db.Decimal(10, 2)
+  discountType           DiscountType?
+  discountValue          Decimal? @db.Decimal(10, 2)
+  additionalCharge       Decimal  @default(0) @db.Decimal(10, 2)
+  finalPrice             Decimal  @db.Decimal(10, 2)
+
+  startDate              DateTime
+  endDate                DateTime?
+
+  cancelAtPeriodEnd      Boolean  @default(false)
+
+  provider               String?
+  providerCustomerId     String?
+  providerSubscriptionId String?
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  organization           Organization @relation(fields: [organizationId], references: [id])
+  plan                   Plan         @relation(fields: [planId], references: [id])
+  history                SubscriptionHistory[]
+  payments               Payment[]
+
+  @@index([organizationId])
+  @@index([planId])
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+  SUSPENDED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+model SubscriptionHistory {
+  id             String   @id @default(uuid())
+  subscriptionId String
+
+  action         String
+
+  oldPlanId      String?
+  newPlanId      String?
+
+  oldPrice       Decimal? @db.Decimal(10, 2)
+  newPrice       Decimal? @db.Decimal(10, 2)
+
+  reason         String?
+  changedBy      String?
+
+  createdAt      DateTime @default(now())
+
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+
+  actorType      String
+  actorId        String?
+
+  organizationId String?
+
+  action         String
+  entityType     String
+  entityId       String?
+
+  description    String?
+  metadata       Json?
+
+  ipAddress      String?
+  userAgent      String?
+
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Payment {
+  id                    String   @id @default(uuid())
+
+  organizationId        String
+  subscriptionId        String
+
+  amount                Decimal  @db.Decimal(10, 2)
+  currency              String   @default("USD")
+
+  status                PaymentStatus
+  paymentMethod         String?
+
+  provider              String?
+  providerPaymentId     String?
+  providerCustomerId    String?
+
+  invoiceId             String?
+
+  paidAt                DateTime?
+
+  failureReason         String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  subscription          Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([organizationId])
+  @@index([subscriptionId])
+  @@index([providerPaymentId])
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+  CANCELED
 }
