@@ -22,7 +22,11 @@ model Organization {
   slug      String @unique
   ownerId   String @unique
 
-  status    OrganizationStatus @default(ACTIVE)
+  // Lifecycle: ONBOARDING (created, no active subscription yet) -> ACTIVE
+  // (subscription activated) -> SUSPENDED (super admin cutoff). Doesn't
+  // replace the Subscription.status check — an org can be ACTIVE here while
+  // its subscription has separately lapsed; that's checked independently.
+  status    OrganizationStatus @default(ONBOARDING)
   createdAt DateTime @default(now())
   createdBy String
   updatedAt DateTime @updatedAt
@@ -30,24 +34,38 @@ model Organization {
 
   owner     User @relation("OrganizationOwner", fields: [ownerId], references: [id])
   users     User[] @relation("OrganizationUsers")
-  subscriptions Subscription[]
+  // One subscription per org, ever — updated in place on renew/upgrade/
+  // downgrade, never a second row. SubscriptionHistory is the change log.
+  subscription  Subscription?
   payments  Payment[]
   // Custom plans negotiated for this org only — never set for PUBLIC plans.
   customPlans Plan[]
+  quoteRequests QuoteRequest[]
 }
 
 enum OrganizationStatus {
+  ONBOARDING
   ACTIVE
   SUSPENDED
 }
 
 model User{
   id                 String   @id @default(uuid())
-  organizationId     String
-  roleId             String
+  // Nullable — a self-registering owner exists before any org does; an
+  // invited user always has both set immediately at creation instead.
+  organizationId     String?
+  roleId             String?
 
   email              String   @unique
-  passwordHash       String
+  // Null until the user completes email verification (self-registration) or
+  // accepts their invite (added by an owner) — both flows set a real
+  // password for the first time via the token below, never before.
+  passwordHash       String?
+
+  // Single-use, expiring token backing both "verify your own email" and
+  // "accept your invite" — same mechanism, same fields, either origin.
+  verificationToken            String?   @unique
+  verificationTokenExpiresAt   DateTime?
 
   firstName          String
   lastName           String
@@ -73,8 +91,8 @@ model User{
   updatedAt          DateTime @updatedAt
   updatedBy          String?
 
-  organization       Organization @relation("OrganizationUsers", fields: [organizationId], references: [id])
-  role               Role @relation(fields: [roleId], references: [id])
+  organization       Organization? @relation("OrganizationUsers", fields: [organizationId], references: [id])
+  role               Role? @relation(fields: [roleId], references: [id])
   // Opposite side of Organization.owner — only set for the one user who owns an org.
   ownedOrganization  Organization? @relation("OrganizationOwner")
 
@@ -167,9 +185,42 @@ model PlanEntitlement {
   @@unique([planId, feature])
 }
 
+// A "request a quote" form submission or "call us" log entry — the path
+// toward a Super Admin manually creating a CUSTOM Plan for this org after
+// negotiating a price off-platform. Not a plan or subscription itself.
+model QuoteRequest {
+  id             String             @id @default(uuid())
+  organizationId String
+
+  notes          String?
+  contactPhone   String?
+  source         QuoteRequestSource
+  status         QuoteRequestStatus @default(PENDING)
+
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
+enum QuoteRequestSource {
+  FORM
+  CALL
+}
+
+enum QuoteRequestStatus {
+  PENDING
+  CONTACTED
+  RESOLVED
+}
+
 model Subscription {
   id                     String   @id @default(uuid())
-  organizationId         String
+  // Unique — at most one subscription per org, ever. Renewing/changing plan
+  // updates this same row; it never gets a second one.
+  organizationId         String   @unique
   planId                 String
 
   status                 SubscriptionStatus
@@ -198,7 +249,6 @@ model Subscription {
   history                SubscriptionHistory[]
   payments               Payment[]
 
-  @@index([organizationId])
   @@index([planId])
 }
 

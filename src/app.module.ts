@@ -1,15 +1,11 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { PrismaModule } from './prisma/prisma.module.js';
-import { ResponseInterceptor } from './common/interceptors/response.interceptor.js';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
+import { CommonModule } from './common/common.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [CommonModule, PrismaModule, AuthModule],
   controllers: [],
-  providers: [
-    { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
-    { provide: APP_FILTER, useClass: HttpExceptionFilter },
-  ],
+  providers: [],
 })
 export class AppModule { }
