@@ -6,9 +6,10 @@ import { OrganizationsModule } from './modules/organizations/organizations.modul
 import { PlansModule } from './modules/plans/plans.module.js';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module.js';
 import { SuperAdminModule } from './modules/super-admin/super-admin.module.js';
+import { RolesModule } from './modules/roles/roles.module.js';
 
 @Module({
-  imports: [CommonModule, PrismaModule, AuthModule, OrganizationsModule, PlansModule, SubscriptionsModule, SuperAdminModule],
+  imports: [CommonModule, PrismaModule, AuthModule, OrganizationsModule, PlansModule, SubscriptionsModule, SuperAdminModule, RolesModule],
   controllers: [],
   providers: [],
 })

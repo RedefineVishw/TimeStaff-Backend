@@ -78,11 +78,9 @@ export class OrganizationsService {
         const verificationToken = generateVerificationToken();
         const verificationTokenExpiresAt = getTokenExpiry();
 
-        // Reuses the same "verification" email/link mechanism as self
-        // registration — the link this produces should really read
-        // /accept-invite rather than /verify-email once the frontend exists
-        // for both flows; wiring that distinction through is a follow-up.
-        await this.mailService.sendVerificationEmail(dto.email, verificationToken);
+        // Invited users have passwordHash: null until accepted — this must
+        // link to /accept-invite, not /verify-email (see MailService).
+        await this.mailService.sendInviteEmail(dto.email, verificationToken);
 
         const user = await this.prisma.user.create({
             data: {

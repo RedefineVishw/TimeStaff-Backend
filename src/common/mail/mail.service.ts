@@ -60,4 +60,20 @@ export class MailService implements OnModuleInit {
     );
     console.log(`[mail] Verification link written to link.txt for ${to}`);
   }
+
+  // Separate from sendVerificationEmail on purpose: an invited user has
+  // passwordHash: null until they accept, so their link must point to
+  // /accept-invite (which sets the password) — not /verify-email, which
+  // only flips emailVerified and would leave them permanently unable to
+  // log in (passwordHash staying null forever).
+  async sendInviteEmail(to: string, token: string): Promise<void> {
+    const acceptInviteUrl = `${process.env['WEB_APP_URL'] ?? 'http://localhost:3000'}/accept-invite?token=${token}`;
+
+    await writeFile(
+      join(process.cwd(), 'link.txt'),
+      `To: ${to}\n${acceptInviteUrl}\n`,
+      'utf-8',
+    );
+    console.log(`[mail] Invite link written to link.txt for ${to}`);
+  }
 }
