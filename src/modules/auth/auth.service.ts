@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -153,6 +153,44 @@ export class AuthService {
                 organizationId: user.organizationId,
                 role: user.role?.name ?? null,
             },
+        };
+    }
+
+    // Backs GET /auth/me — how the frontend re-hydrates "who's logged in"
+    // after a page refresh, since the access token itself only lives in
+    // memory (Zustand) and isn't persisted. Re-reads fresh from the DB
+    // rather than trusting the JWT payload, so a role/org change since the
+    // token was issued is reflected immediately.
+    async getMe(userId: string) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            include: { role: true, organization: true },
+        });
+
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        return {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            displayName: user.displayName,
+            phone: user.phone,
+            avatarUrl: user.avatarUrl,
+            timezone: user.timezone,
+            locale: user.locale,
+            emailVerified: user.emailVerified,
+            role: user.role?.name ?? null,
+            organization: user.organization
+                ? {
+                      id: user.organization.id,
+                      name: user.organization.name,
+                      slug: user.organization.slug,
+                      status: user.organization.status,
+                  }
+                : null,
         };
     }
 

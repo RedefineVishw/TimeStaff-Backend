@@ -25,14 +25,20 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     async validate(payload: JwtPayload) {
         const user = await this.prisma.user.findUnique({
             where: { id: payload.sub },
-            include: { role: true },
+            include: { role: { include: { permissions: { include: { permission: true } } } } },
         });
 
         if (!user || !user.isActive) {
             throw new UnauthorizedException('Invalid or expired session');
         }
 
-        const { passwordHash: _passwordHash, ...safeUser } = user;
-        return safeUser; // becomes req.user
+        const { passwordHash: _passwordHash, role, ...safeUser } = user;
+
+        return {
+            ...safeUser,
+            // Flattened to plain permission-name strings — PermissionsGuard
+            // just does an array check, no extra DB query per request.
+            role: role ? { id: role.id, name: role.name, permissions: role.permissions.map((rp) => rp.permission.name) } : null,
+        }; // becomes req.user
     }
 }

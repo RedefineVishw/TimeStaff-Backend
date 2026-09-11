@@ -6,6 +6,8 @@ import { CreateQuoteRequestDto } from './dto/create-quote-request.dto.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
+import { PermissionsGuard } from '../../common/guards/permissions.guard.js';
+import { RequirePermissions } from '../../common/decorators/permissions.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { CurrentUserPayload } from '../../common/types/current-user.type.js';
 import { SuccessMessage } from '../../common/decorators/success-message.decorator.js';
@@ -22,8 +24,8 @@ export class OrganizationsController {
     }
 
     @Post(':id/invite')
-    @UseGuards(RolesGuard)
-    @Roles('ORGANIZATION_ADMIN')
+    @UseGuards(PermissionsGuard)
+    @RequirePermissions('user.create')
     @SuccessMessage('Invite sent.')
     invite(
         @CurrentUser() user: CurrentUserPayload,

@@ -7,5 +7,5 @@ export interface CurrentUserPayload {
     roleId: string | null;
     emailVerified: boolean;
     isActive: boolean;
-    role: { id: string; name: string } | null;
+    role: { id: string; name: string; permissions: string[] } | null;
 }

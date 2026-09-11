@@ -10,7 +10,10 @@ import { MailModule } from '../../common/mail/mail.module.js';
     // JwtModule isn't configured with a default secret here — every
     // sign/verify call in AuthService passes its own secret explicitly
     // (access vs. refresh use different ones).
-    imports: [MailModule, PassportModule, JwtModule.register({})],
+    // PassportModule.register(...) (not bare PassportModule) — AuthGuard's
+    // AuthModuleOptions dependency doesn't resolve through the bare import,
+    // a quirk we hit building the other guarded modules (see their comments).
+    imports: [MailModule, PassportModule.register({ defaultStrategy: 'jwt' }), JwtModule.register({})],
     controllers: [AuthController],
     providers: [AuthService, JwtStrategy],
     exports: [JwtModule, PassportModule],

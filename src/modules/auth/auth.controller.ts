@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -7,6 +7,9 @@ import { ResendVerificationDto } from './dto/resend-verification.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { AcceptInviteDto } from './dto/accept-invite.dto.js';
 import { SuccessMessage } from '../../common/decorators/success-message.decorator.js';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
+import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
+import type { CurrentUserPayload } from '../../common/types/current-user.type.js';
 
 const REFRESH_COOKIE = 'refreshToken';
 // Matches JWT_REFRESH_EXPIRY's default (7d) — keep these two in sync.
@@ -55,6 +58,13 @@ export class AuthController {
         const tokens = await this.authService.refresh(refreshToken);
         this.setRefreshCookie(res, tokens.refreshToken);
         return { accessToken: tokens.accessToken };
+    }
+
+    @Get('me')
+    @UseGuards(JwtAuthGuard)
+    @SuccessMessage('Current user retrieved.')
+    me(@CurrentUser() user: CurrentUserPayload) {
+        return this.authService.getMe(user.id);
     }
 
     @Post('logout')
