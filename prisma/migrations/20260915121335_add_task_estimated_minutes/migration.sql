@@ -1,0 +1,1 @@
+ALTER TABLE "Task" ADD COLUMN     "estimatedMinutes" INTEGER DEFAULT 60;

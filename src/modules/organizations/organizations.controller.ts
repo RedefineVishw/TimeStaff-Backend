@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service.js';
 import { CreateOrganizationDto } from './dto/create-organization.dto.js';
 import { InviteUserDto } from './dto/invite-user.dto.js';
@@ -33,6 +33,12 @@ export class OrganizationsController {
         @Body() dto: InviteUserDto,
     ) {
         return this.organizationsService.invite(user, organizationId, dto);
+    }
+
+    @Get(':id/users')
+    @SuccessMessage('Organization users retrieved.')
+    listUsers(@CurrentUser() user: CurrentUserPayload, @Param('id') organizationId: string) {
+        return this.organizationsService.listUsers(user, organizationId);
     }
 
     @Post(':id/quote-requests')

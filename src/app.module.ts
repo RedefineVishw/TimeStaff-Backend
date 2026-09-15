@@ -7,9 +7,28 @@ import { PlansModule } from './modules/plans/plans.module.js';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module.js';
 import { SuperAdminModule } from './modules/super-admin/super-admin.module.js';
 import { RolesModule } from './modules/roles/roles.module.js';
+import { ProjectsModule } from './modules/projects/projects.module.js';
+import { TasksModule } from './modules/tasks/tasks.module.js';
+import { TimeEntriesModule } from './modules/time-entries/time-entries.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
+import { TeamsModule } from './modules/teams/teams.module.js';
 
 @Module({
-  imports: [CommonModule, PrismaModule, AuthModule, OrganizationsModule, PlansModule, SubscriptionsModule, SuperAdminModule, RolesModule],
+  imports: [
+    CommonModule,
+    PrismaModule,
+    AuthModule,
+    OrganizationsModule,
+    PlansModule,
+    SubscriptionsModule,
+    SuperAdminModule,
+    RolesModule,
+    ProjectsModule,
+    TasksModule,
+    TimeEntriesModule,
+    NotificationsModule,
+    TeamsModule,
+  ],
   controllers: [],
   providers: [],
 })

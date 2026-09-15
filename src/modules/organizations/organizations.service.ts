@@ -70,11 +70,6 @@ export class OrganizationsService {
             throw new ConflictException('An account with this email already exists');
         }
 
-        const role = await this.prisma.role.findUnique({ where: { id: dto.roleId } });
-        if (!role) {
-            throw new BadRequestException('roleId does not match any known role');
-        }
-
         const verificationToken = generateVerificationToken();
         const verificationTokenExpiresAt = getTokenExpiry();
 
@@ -88,7 +83,8 @@ export class OrganizationsService {
                 firstName: dto.firstName,
                 lastName: dto.lastName,
                 organizationId,
-                roleId: dto.roleId,
+                // roleId intentionally omitted — no org-wide or project role
+                // until they're explicitly added to a project.
                 verificationToken,
                 verificationTokenExpiresAt,
                 createdBy: currentUser.id,
@@ -96,6 +92,25 @@ export class OrganizationsService {
         });
 
         return { id: user.id, email: user.email };
+    }
+
+    // Backs the "add project member" picker — needs the full org roster to
+    // choose from, not just existing members of one project. Includes role
+    // name so the frontend can identify (and exclude) the org admin, who
+    // already has automatic full access and never needs a ProjectMember row.
+    async listUsers(currentUser: CurrentUserPayload, organizationId: string) {
+        this.assertBelongsToOrg(currentUser, organizationId);
+        return this.prisma.user.findMany({
+            where: { organizationId },
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                role: { select: { name: true } },
+            },
+            orderBy: { firstName: 'asc' },
+        });
     }
 
     async createQuoteRequest(currentUser: CurrentUserPayload, organizationId: string, dto: CreateQuoteRequestDto) {

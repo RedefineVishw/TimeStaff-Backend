@@ -41,6 +41,7 @@ model Organization {
   // Custom plans negotiated for this org only — never set for PUBLIC plans.
   customPlans Plan[]
   quoteRequests QuoteRequest[]
+  projects      Project[]
 }
 
 enum OrganizationStatus {
@@ -92,9 +93,21 @@ model User{
   updatedBy          String?
 
   organization       Organization? @relation("OrganizationUsers", fields: [organizationId], references: [id])
+  // Org-wide role only (ORGANIZATION_ADMIN, HR) — project-scoped roles
+  // (PROJECT_MANAGER, TEAM_LEAD, COORDINATOR, QA, EMPLOYEE) live on
+  // ProjectMember instead, never here. ORGANIZATION_ADMIN also always has
+  // full access to every project in their org regardless of ProjectMember
+  // rows — enforced in the guard, not representable in the schema.
   role               Role? @relation(fields: [roleId], references: [id])
   // Opposite side of Organization.owner — only set for the one user who owns an org.
   ownedOrganization  Organization? @relation("OrganizationOwner")
+
+  projectMemberships ProjectMember[]
+  assignedTasks       Task[]
+  timeEntries         TimeEntry[]
+  notifications       Notification[]
+  taskComments        TaskComment[]
+  teamMemberships     TeamMember[]
 
   @@index([organizationId])
   @@index([roleId])
@@ -110,6 +123,7 @@ model Role {
 
   users       User[]
   permissions RolePermission[]
+  projectMemberships ProjectMember[]
 }
 
 model Permission {
@@ -350,4 +364,214 @@ enum PaymentStatus {
   FAILED
   REFUNDED
   CANCELED
+}
+
+// --- Phase 2: Projects, Tasks, Time Tracking, Notifications ----------------
+
+model Project {
+  id             String        @id @default(uuid())
+  organizationId String
+
+  name           String
+  description    String?
+  status         ProjectStatus @default(ACTIVE)
+
+  createdAt      DateTime      @default(now())
+  createdBy      String
+  updatedAt      DateTime      @updatedAt
+  updatedBy      String
+
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  members        ProjectMember[]
+  tasks          Task[]
+  teams          Team[]
+
+  @@index([organizationId])
+}
+
+// A sub-grouping of project members, scoped under one or more team leads —
+// what a TEAM_LEAD's task visibility and assignment authority is limited
+// to (they can only see/assign within teams they lead, not the whole
+// project — that's PROJECT_MANAGER's scope).
+model Team {
+  id        String   @id @default(uuid())
+  projectId String
+  name      String
+
+  createdAt DateTime @default(now())
+  createdBy String
+  updatedAt DateTime @updatedAt
+  updatedBy String
+
+  project   Project      @relation(fields: [projectId], references: [id])
+  members   TeamMember[]
+
+  @@index([projectId])
+}
+
+model TeamMember {
+  id      String  @id @default(uuid())
+  teamId  String
+  userId  String
+  // Multiple leads per team are allowed — "the tech lead" isn't assumed to
+  // be exactly one person.
+  isLead  Boolean @default(false)
+
+  addedAt DateTime @default(now())
+  addedBy String
+
+  team    Team @relation(fields: [teamId], references: [id])
+  user    User @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+// A user's role is scoped to one project at a time — the same person can be
+// PROJECT_MANAGER on one project, EMPLOYEE on another, and absent from a
+// third. Never used for org-wide checks (see User.role for that).
+// ORGANIZATION_ADMIN doesn't need a row here — they always have full access
+// to every project in their org, enforced in the guard regardless of
+// membership rows.
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  roleId    String
+
+  addedAt   DateTime @default(now())
+  addedBy   String
+
+  project   Project  @relation(fields: [projectId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  role      Role     @relation(fields: [roleId], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  projectId   String
+  // Self-relation for subtasks — null parentId = top-level task.
+  parentId    String?
+  // 0, 1, or 2 — three levels max, enforced in the service layer (Prisma
+  // has no native "max hierarchy depth" constraint) when creating a subtask
+  // under a depth-2 parent.
+  depth       Int          @default(0)
+
+  title       String
+  description String?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+
+  assigneeId  String?
+  dueDate     DateTime?
+  // Estimated effort, 1 minute to 480 (8 hours) — validated in the DTOs, not
+  // enforced here. Distinct from TimeEntry, which is actual tracked time
+  // (Phase 3, desktop app). No default — null means "this is a container
+  // task, break it into subtasks"; a real value means "atomic unit of work,
+  // no subtasks allowed". The two are mutually exclusive, enforced in
+  // TasksService (setting one is blocked once the other is true).
+  estimatedMinutes Int?
+
+  createdAt   DateTime     @default(now())
+  createdBy   String
+  updatedAt   DateTime     @updatedAt
+  updatedBy   String
+
+  project     Project     @relation(fields: [projectId], references: [id])
+  parent      Task?       @relation("TaskSubtasks", fields: [parentId], references: [id])
+  subtasks    Task[]      @relation("TaskSubtasks")
+  assignee    User?       @relation(fields: [assigneeId], references: [id])
+  // Only valid when this task currently has no subtasks — enforced in the
+  // service layer at time-entry creation, not representable in the schema
+  // (leaf-ness can change over time as subtasks are added/removed).
+  timeEntries TimeEntry[]
+  comments    TaskComment[]
+
+  @@index([projectId])
+  @@index([parentId])
+  @@index([assigneeId])
+}
+
+// A task's discussion thread — any project member can post, no separate
+// permission gate (same access level as viewing the task itself).
+model TaskComment {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  body      String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task      Task @relation(fields: [taskId], references: [id])
+  user      User @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model TimeEntry {
+  id          String    @id @default(uuid())
+  taskId      String
+  userId      String
+
+  startedAt   DateTime
+  // null = timer currently running. A user can only have one running timer
+  // at a time — starting a new one auto-stops whichever is already running.
+  endedAt     DateTime?
+  durationSec Int?
+  note        String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  task        Task @relation(fields: [taskId], references: [id])
+  user        User @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+// The dashboard's "inbox" feed — generated server-side on events like task
+// assignment or status changes, not user-authored.
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String
+
+  type       String
+  title      String
+  message    String?
+
+  entityType String?
+  entityId   String?
+
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user       User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
 }
