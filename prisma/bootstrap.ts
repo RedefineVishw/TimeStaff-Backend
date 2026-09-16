@@ -47,13 +47,18 @@ const PERMISSIONS = [
   "kpi.edit",
   "reports.view",
   "tracking.settings.manage",
+  "screenshots.view",
 ] as const;
 
 // First-pass role -> permission mapping. A real business decision, not a
 // technical one — review and adjust these, don't take them as final.
 // Baseline for every role: time.view/time.create/time.edit — tracking your
 // own hours isn't an EMPLOYEE-only feature, it's a bare-minimum capability
-// every role needs regardless of what else they can manage.
+// every role needs regardless of what else they can manage. Same logic for
+// screenshots.view: everyone can see their own captures (the visibility
+// scope in ProjectAccessService — ALL/TEAM/OWN — is what actually decides
+// whether that means just yourself or your team/the whole project; this
+// permission alone doesn't grant seeing anyone else's).
 const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   ORGANIZATION_ADMIN: PERMISSIONS, // full access within their org
   PROJECT_MANAGER: [
@@ -78,6 +83,7 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "bug.assign",
     "reports.view",
     "kpi.view",
+    "screenshots.view",
   ],
   COORDINATOR: [
     "organization.view",
@@ -91,6 +97,7 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "time.create",
     "time.edit",
     "reports.view",
+    "screenshots.view",
   ],
   TEAM_LEAD: [
     "organization.view",
@@ -106,6 +113,7 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "time.approve",
     "reports.view",
     "kpi.view",
+    "screenshots.view",
   ],
   QA: [
     "organization.view",
@@ -119,6 +127,7 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "bug.create",
     "bug.edit",
     "bug.assign",
+    "screenshots.view",
   ],
   EMPLOYEE: [
     "organization.view",
@@ -128,6 +137,7 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "time.view",
     "time.create",
     "time.edit",
+    "screenshots.view",
   ],
   HR: [
     "organization.view",
@@ -141,6 +151,7 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "time.view",
     "time.create",
     "time.edit",
+    "screenshots.view",
   ],
 };
 

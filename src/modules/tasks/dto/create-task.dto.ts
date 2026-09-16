@@ -31,6 +31,10 @@ export class CreateTaskDto {
 
     @IsOptional()
     @IsDateString()
+    startDate?: string;
+
+    @IsOptional()
+    @IsDateString()
     dueDate?: string;
 
     // 1 minute to 480 (8 hours, a full working day).

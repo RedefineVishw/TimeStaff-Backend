@@ -183,6 +183,15 @@ export class AuthService {
             locale: user.locale,
             emailVerified: user.emailVerified,
             role: user.role?.name ?? null,
+            // Flat, alongside the nested `organization` below — the desktop
+            // app's session-restore path (GET /auth/me) reuses the same
+            // AuthUser shape as POST /auth/login, which returns
+            // `organizationId` flat. Without it here, restoring a session
+            // (as opposed to a fresh login) left `organizationId` undefined,
+            // silently skipping the org tracking-settings fetch and falling
+            // back to the hardcoded 5-minute defaults instead of the org's
+            // real idle-threshold/screenshot-interval config.
+            organizationId: user.organizationId,
             organization: user.organization
                 ? {
                       id: user.organization.id,

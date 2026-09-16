@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { ProjectAccessService } from '../projects/project-access.service.js';
 import type { CurrentUserPayload } from '../../common/types/current-user.type.js';
+import type { FindScreenshotsDto } from './dto/find-screenshots.dto.js';
 
 // Local disk only, per the standing requirement — no third-party storage.
 // Folder lives at the backend project's root, named literally `screenshots`.
@@ -49,6 +50,50 @@ export class ScreenshotsService {
                 organizationId: user.organizationId,
                 filePath: relativeFilePath,
             },
+        });
+    }
+
+    // The review gallery — one project, one day, optionally one person.
+    // Gated behind `screenshots.view` (org admin / PM / team lead) and
+    // further scoped exactly like the task list (ProjectAccessService's
+    // ALL/TEAM/OWN split): a team lead only ever sees their own team's
+    // captures, never the whole project's.
+    async findAllForProject(user: CurrentUserPayload, projectId: string, query: FindScreenshotsDto) {
+        await this.access.assertPermission(user, projectId, 'screenshots.view');
+        const scope = await this.access.getTaskVisibilityScope(user, projectId);
+
+        let userId: string | { in: string[] } | undefined;
+        if (scope.kind === 'OWN') {
+            userId = user.id;
+        } else if (scope.kind === 'TEAM') {
+            userId = { in: [...scope.userIds] };
+        }
+
+        if (query.userId) {
+            const allowed =
+                scope.kind === 'ALL' ||
+                (scope.kind === 'OWN' && query.userId === user.id) ||
+                (scope.kind === 'TEAM' && scope.userIds.has(query.userId));
+            if (!allowed) {
+                throw new ForbiddenException("You don't have access to this person's screenshots");
+            }
+            userId = query.userId;
+        }
+
+        let takenAt: { gte: Date; lt: Date } | undefined;
+        if (query.date) {
+            const start = new Date(`${query.date}T00:00:00.000Z`);
+            takenAt = { gte: start, lt: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+        }
+
+        return this.prisma.screenshot.findMany({
+            where: { task: { projectId }, ...(userId ? { userId } : {}), ...(takenAt ? { takenAt } : {}) },
+            include: {
+                user: { select: { id: true, firstName: true, lastName: true } },
+                task: { select: { id: true, title: true } },
+            },
+            orderBy: { takenAt: 'desc' },
+            take: 300,
         });
     }
 

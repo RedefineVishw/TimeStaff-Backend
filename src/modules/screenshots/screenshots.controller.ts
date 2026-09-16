@@ -5,6 +5,7 @@ import {
     Get,
     Param,
     Post,
+    Query,
     Req,
     Res,
     UploadedFile,
@@ -15,6 +16,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import type { Request, Response } from 'express';
 import { ScreenshotsService, SCREENSHOTS_ROOT, screenshotDir, screenshotFilename, ensureScreenshotDir } from './screenshots.service.js';
+import { FindScreenshotsDto } from './dto/find-screenshots.dto.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { EntitlementGuard } from '../../common/guards/entitlement.guard.js';
 import { RequireEntitlement } from '../../common/decorators/entitlement.decorator.js';
@@ -78,6 +80,16 @@ export class ScreenshotsController {
         const relativeDir = (req as Request & { screenshotRelativeDir?: string }).screenshotRelativeDir!;
         const relativeFilePath = join(relativeDir, file.filename);
         return this.screenshotsService.create(user, taskId, relativeFilePath);
+    }
+
+    @Get('projects/:id/screenshots')
+    @SuccessMessage('Screenshots retrieved.')
+    findAllForProject(
+        @CurrentUser() user: CurrentUserPayload,
+        @Param('id') projectId: string,
+        @Query() query: FindScreenshotsDto,
+    ) {
+        return this.screenshotsService.findAllForProject(user, projectId, query);
     }
 
     @Get('screenshots/:id/file')

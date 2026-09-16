@@ -106,6 +106,7 @@ model User{
   projectMemberships ProjectMember[]
   assignedTasks       Task[]
   timeEntries         TimeEntry[]
+  timeEntryRequests   TimeEntryRequest[]
   notifications       Notification[]
   taskComments        TaskComment[]
   teamMemberships     TeamMember[]
@@ -475,6 +476,13 @@ model Task {
   priority    TaskPriority @default(MEDIUM)
 
   assigneeId  String?
+  // Hubstaff-style date range — startDate is the range's beginning, dueDate
+  // (kept as-is rather than renamed to endDate, to avoid touching every
+  // existing caller) is the range's end. Both optional and independent: a
+  // task can have just a due date, just a start date, both, or neither.
+  // Range ordering (startDate <= dueDate) is enforced in TasksService, not
+  // here — Prisma has no cross-column check constraint.
+  startDate   DateTime?
   dueDate     DateTime?
   // Estimated effort, 1 minute to 480 (8 hours) — validated in the DTOs, not
   // enforced here. Distinct from TimeEntry, which is actual tracked time
@@ -497,6 +505,7 @@ model Task {
   // service layer at time-entry creation, not representable in the schema
   // (leaf-ness can change over time as subtasks are added/removed).
   timeEntries TimeEntry[]
+  timeEntryRequests TimeEntryRequest[]
   comments    TaskComment[]
   screenshots Screenshot[]
 
@@ -512,6 +521,13 @@ model TaskComment {
   taskId    String
   userId    String
   body      String
+
+  // Users explicitly @mentioned in this comment (via the composer's
+  // autocomplete, not parsed out of the text) — drives the TASK_MENTION
+  // notification and lets the frontend highlight "@Name" back to a real
+  // person when rendering. No join table: a plain id array is enough since
+  // nothing needs to query "comments mentioning user X" yet.
+  mentionedUserIds String[] @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -554,9 +570,55 @@ model TimeEntry {
   task        Task @relation(fields: [taskId], references: [id])
   user        User @relation(fields: [userId], references: [id])
   screenshots Screenshot[]
+  // Set once the request that created this entry (if any) is approved — a
+  // live-tracked entry (desktop start/stop) has no request at all.
+  request     TimeEntryRequest?
 
   @@index([taskId])
   @@index([userId])
+}
+
+enum TimeRequestStatus {
+  SUBMITTED
+  APPROVED
+  DENIED
+}
+
+// A manually-entered time span awaiting sign-off before it counts as real
+// tracked time — Hubstaff calls this "Manual Time Requests". Who can
+// approve one is a hierarchy, not a fixed permission: anyone ranked above
+// the submitter *within that project* (see ROLE_RANK in
+// time-entry-requests.service.ts), or the org admin unconditionally. An
+// admin's own submission skips this table's pending state entirely — it's
+// created here already APPROVED, with `timeEntryId` set immediately — so
+// the "my requests" history view has one consistent place to look
+// regardless of whether review was actually needed.
+model TimeEntryRequest {
+  id          String            @id @default(uuid())
+  taskId      String
+  userId      String
+
+  startedAt   DateTime
+  endedAt     DateTime
+  note        String?
+
+  status      TimeRequestStatus @default(SUBMITTED)
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  reviewNote  String?
+
+  timeEntryId String?           @unique
+  timeEntry   TimeEntry?        @relation(fields: [timeEntryId], references: [id])
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  task        Task @relation(fields: [taskId], references: [id])
+  user        User @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([userId])
+  @@index([status])
 }
 
 // The dashboard's "inbox" feed — generated server-side on events like task

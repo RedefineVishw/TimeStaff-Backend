@@ -46,6 +46,20 @@ export class TasksService {
             await this.assertAssignable(user, projectId, dto.assigneeId);
         }
 
+        const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
+        const dueDate = dto.dueDate ? new Date(dto.dueDate) : undefined;
+
+        // A brand-new task can't be backdated — its range has to start no
+        // earlier than the day it's actually being created on.
+        const today = this.toUTCDay(new Date());
+        if (startDate && startDate < today) {
+            throw new BadRequestException(`Start date can't be earlier than today (${this.formatDay(today)})`);
+        }
+        if (dueDate && dueDate < today) {
+            throw new BadRequestException(`Due date can't be earlier than today (${this.formatDay(today)})`);
+        }
+        this.assertDateRangeValid(startDate, dueDate);
+
         const task = await this.prisma.task.create({
             data: {
                 projectId,
@@ -55,7 +69,8 @@ export class TasksService {
                 description: dto.description,
                 priority: dto.priority,
                 assigneeId: dto.assigneeId,
-                dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+                startDate,
+                dueDate,
                 estimatedMinutes: dto.estimatedMinutes,
                 createdBy: user.id,
                 updatedBy: user.id,
@@ -127,17 +142,96 @@ export class TasksService {
             }
         }
 
+        // A partial update only sends the side of the range that changed —
+        // validate against whichever value (new or already-persisted) ends
+        // up on each side, not just the one(s) present in this request.
+        const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
+        const dueDate = dto.dueDate ? new Date(dto.dueDate) : undefined;
+        const effectiveStartDate = startDate ?? task.startDate;
+        const effectiveDueDate = dueDate ?? task.dueDate;
+
+        // The range can be pushed later at any time, but never dragged
+        // earlier than the day the task was actually created — "created on
+        // the 15th" can't retroactively be given a start date on the 14th.
+        if (startDate) {
+            const createdDay = this.toUTCDay(task.createdAt);
+            if (startDate < createdDay) {
+                throw new BadRequestException(
+                    `Start date can't be earlier than when this task was created (${this.formatDay(createdDay)})`,
+                );
+            }
+        }
+
+        // Once time has actually been tracked against this task, the range
+        // can never shrink to exclude a day that already has logged time on
+        // it — it can only ever grow to keep covering that span.
+        if (startDate !== undefined || dueDate !== undefined) {
+            const trackedSpan = await this.getTrackedDateSpan(id);
+            if (trackedSpan) {
+                if (effectiveStartDate && effectiveStartDate > trackedSpan.earliest) {
+                    throw new BadRequestException(
+                        `Start date can't be moved past time already tracked on this task (earliest tracked: ${this.formatDay(trackedSpan.earliest)})`,
+                    );
+                }
+                if (effectiveDueDate && effectiveDueDate < trackedSpan.latest) {
+                    throw new BadRequestException(
+                        `Due date can't be moved before time already tracked on this task (latest tracked: ${this.formatDay(trackedSpan.latest)})`,
+                    );
+                }
+            }
+        }
+
+        this.assertDateRangeValid(effectiveStartDate, effectiveDueDate);
+
         return this.prisma.task.update({
             where: { id },
             data: {
                 title: dto.title,
                 description: dto.description,
                 priority: dto.priority,
-                dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+                startDate,
+                dueDate,
                 estimatedMinutes: dto.estimatedMinutes,
                 updatedBy: user.id,
             },
         });
+    }
+
+    private assertDateRangeValid(startDate: Date | null | undefined, dueDate: Date | null | undefined) {
+        if (startDate && dueDate && startDate > dueDate) {
+            throw new BadRequestException('Start date must be on or before the due date');
+        }
+    }
+
+    // Dates are stored as UTC midnight of the picked calendar day (see
+    // create()/update()) — truncating any other Date (e.g. createdAt, a
+    // TimeEntry timestamp) to its UTC calendar day puts it on the same
+    // footing for comparison, regardless of what time of day it actually is.
+    private toUTCDay(d: Date): Date {
+        return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    }
+
+    private formatDay(d: Date): string {
+        return d.toISOString().slice(0, 10);
+    }
+
+    // The full span of calendar days this task already has tracked time on
+    // — null if nothing's been tracked yet. Used to stop the due-date range
+    // from shrinking to exclude time that's already logged.
+    private async getTrackedDateSpan(taskId: string): Promise<{ earliest: Date; latest: Date } | null> {
+        const agg = await this.prisma.timeEntry.aggregate({
+            where: { taskId },
+            _min: { startedAt: true },
+            _max: { startedAt: true, endedAt: true },
+        });
+        if (!agg._min.startedAt) return null;
+
+        const latestRaw =
+            agg._max.endedAt && agg._max.startedAt && agg._max.endedAt > agg._max.startedAt
+                ? agg._max.endedAt
+                : agg._max.startedAt!;
+
+        return { earliest: this.toUTCDay(agg._min.startedAt), latest: this.toUTCDay(latestRaw) };
     }
 
     async remove(user: CurrentUserPayload, id: string) {
@@ -156,6 +250,16 @@ export class TasksService {
     async assign(user: CurrentUserPayload, id: string, dto: AssignTaskDto) {
         const task = await this.getTaskOrThrow(id);
         await this.access.assertPermission(user, task.projectId, 'task.assign');
+
+        // The assignee is only up for grabs while the task is still To Do —
+        // once work has actually started (or moved further), reassigning or
+        // unassigning it out from under whoever's on it would just lose
+        // accountability for what's already in progress.
+        if (task.status !== 'TODO') {
+            throw new BadRequestException(
+                'This task can only be reassigned while it\'s still To Do — move it back to To Do first if it needs a new assignee',
+            );
+        }
 
         if (dto.assigneeId) {
             await this.assertAssignable(user, task.projectId, dto.assigneeId);
