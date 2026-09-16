@@ -46,10 +46,14 @@ const PERMISSIONS = [
   "kpi.view",
   "kpi.edit",
   "reports.view",
+  "tracking.settings.manage",
 ] as const;
 
 // First-pass role -> permission mapping. A real business decision, not a
 // technical one — review and adjust these, don't take them as final.
+// Baseline for every role: time.view/time.create/time.edit — tracking your
+// own hours isn't an EMPLOYEE-only feature, it's a bare-minimum capability
+// every role needs regardless of what else they can manage.
 const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   ORGANIZATION_ADMIN: PERMISSIONS, // full access within their org
   PROJECT_MANAGER: [
@@ -67,6 +71,8 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "task.assign",
     "task.status.change",
     "time.view",
+    "time.create",
+    "time.edit",
     "time.approve",
     "bug.view",
     "bug.assign",
@@ -82,6 +88,8 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "task.assign",
     "task.status.change",
     "time.view",
+    "time.create",
+    "time.edit",
     "reports.view",
   ],
   TEAM_LEAD: [
@@ -93,6 +101,8 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "task.assign",
     "task.status.change",
     "time.view",
+    "time.create",
+    "time.edit",
     "time.approve",
     "reports.view",
     "kpi.view",
@@ -102,6 +112,9 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "project.view",
     "task.view",
     "task.status.change",
+    "time.view",
+    "time.create",
+    "time.edit",
     "bug.view",
     "bug.create",
     "bug.edit",
@@ -125,6 +138,9 @@ const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "hr.edit",
     "kpi.view",
     "reports.view",
+    "time.view",
+    "time.create",
+    "time.edit",
   ],
 };
 

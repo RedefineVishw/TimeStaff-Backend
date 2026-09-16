@@ -42,6 +42,7 @@ model Organization {
   customPlans Plan[]
   quoteRequests QuoteRequest[]
   projects      Project[]
+  trackingSettings OrganizationTrackingSettings?
 }
 
 enum OrganizationStatus {
@@ -108,6 +109,7 @@ model User{
   notifications       Notification[]
   taskComments        TaskComment[]
   teamMemberships     TeamMember[]
+  screenshots         Screenshot[]
 
   @@index([organizationId])
   @@index([roleId])
@@ -496,6 +498,7 @@ model Task {
   // (leaf-ness can change over time as subtasks are added/removed).
   timeEntries TimeEntry[]
   comments    TaskComment[]
+  screenshots Screenshot[]
 
   @@index([projectId])
   @@index([parentId])
@@ -550,6 +553,7 @@ model TimeEntry {
 
   task        Task @relation(fields: [taskId], references: [id])
   user        User @relation(fields: [userId], references: [id])
+  screenshots Screenshot[]
 
   @@index([taskId])
   @@index([userId])
@@ -574,4 +578,49 @@ model Notification {
   user       User @relation(fields: [userId], references: [id])
 
   @@index([userId, isRead])
+}
+
+// Per-org configuration for the desktop time-tracker's idle-discard and
+// screenshot behavior — one row per org, auto-created with defaults on
+// first read. Editable only by ORGANIZATION_ADMIN (tracking.settings.manage).
+model OrganizationTrackingSettings {
+  id                   String @id @default(uuid())
+  organizationId       String @unique
+
+  // Seconds of OS-level inactivity before the desktop app prompts to
+  // discard the idle stretch. Range 15–900 (15s–15min), DTO-validated.
+  idleThresholdSec     Int    @default(300)
+  // How often the desktop app captures a screenshot while a timer is
+  // running. Range 5–900 (5s–15min), DTO-validated.
+  screenshotIntervalSec Int   @default(300)
+
+  updatedAt DateTime @updatedAt
+  updatedBy String
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+// A screenshot captured by the desktop app while a timer was running.
+// Stored on local disk under a `screenshots/` folder at the backend's
+// project root (no third-party storage) — filePath is relative to that
+// folder, never served statically; only via the authenticated stream
+// endpoint in ScreenshotsController.
+model Screenshot {
+  id             String   @id @default(uuid())
+  timeEntryId    String
+  taskId         String
+  userId         String
+  organizationId String
+
+  filePath       String
+  takenAt        DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id])
+  task      Task      @relation(fields: [taskId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([timeEntryId])
+  @@index([taskId])
+  @@index([userId])
 }

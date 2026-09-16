@@ -1,6 +1,8 @@
 import { IsEmail, IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
+import { NormalizeEmail } from '../../../common/utils/normalize-email.util.js';
 
 export class RegisterDto {
+    @NormalizeEmail()
     @IsEmail({}, { message: 'Enter a valid email address' })
     email!: string;
 

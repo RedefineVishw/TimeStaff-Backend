@@ -17,7 +17,18 @@ export class EntitlementGuard implements CanActivate {
     ) { }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
-        const feature = this.reflector.get<string>(ENTITLEMENT_KEY, context.getHandler());
+        // getAllAndOverride, not get(..., context.getHandler()) alone —
+        // @RequireEntitlement is applied at the controller class level
+        // (TimeEntriesController, ScreenshotsController), and a method
+        // function has no prototypal link to its class, so handler-only
+        // lookup silently missed class-level metadata (feature always
+        // undefined, guard always passing regardless of plan). This checks
+        // the handler first, falling back to the class, matching how
+        // NestJS's own guards are meant to combine method + class metadata.
+        const feature = this.reflector.getAllAndOverride<string>(ENTITLEMENT_KEY, [
+            context.getHandler(),
+            context.getClass(),
+        ]);
         if (!feature) {
             return true;
         }

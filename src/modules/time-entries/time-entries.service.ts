@@ -2,6 +2,8 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { ProjectAccessService } from '../projects/project-access.service.js';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto.js';
+import { StopTimeEntryDto } from './dto/stop-time-entry.dto.js';
+import { FindTimeEntriesDto } from './dto/find-time-entries.dto.js';
 import type { CurrentUserPayload } from '../../common/types/current-user.type.js';
 
 @Injectable()
@@ -29,7 +31,7 @@ export class TimeEntriesService {
         });
     }
 
-    async stop(user: CurrentUserPayload, id: string) {
+    async stop(user: CurrentUserPayload, id: string, dto: StopTimeEntryDto) {
         const entry = await this.prisma.timeEntry.findUnique({ where: { id } });
         if (!entry) {
             throw new NotFoundException('Time entry not found');
@@ -40,7 +42,29 @@ export class TimeEntriesService {
         if (entry.endedAt) {
             throw new BadRequestException('This timer has already been stopped');
         }
-        return this.stopEntry(id, entry.startedAt);
+
+        // An explicit endedAt is how the desktop app excludes an idle
+        // stretch from logged time — it passes the idle-since timestamp
+        // instead of leaving this as "now".
+        let endedAt: Date | undefined;
+        if (dto.endedAt) {
+            endedAt = new Date(dto.endedAt);
+            if (endedAt <= entry.startedAt || endedAt > new Date()) {
+                throw new BadRequestException('endedAt must be between the timer\'s start time and now');
+            }
+        }
+
+        return this.stopEntry(id, entry.startedAt, endedAt);
+    }
+
+    // The caller's currently-running entry, if any — lets a client (desktop
+    // app, or the web timeline) restore in-progress timer state after a
+    // restart/reload instead of assuming nothing is running.
+    findCurrentForUser(user: CurrentUserPayload) {
+        return this.prisma.timeEntry.findFirst({
+            where: { userId: user.id, endedAt: null },
+            include: { task: { select: { id: true, title: true, project: { select: { id: true, name: true } } } } },
+        });
     }
 
     async createManual(user: CurrentUserPayload, taskId: string, dto: CreateTimeEntryDto) {
@@ -67,9 +91,23 @@ export class TimeEntriesService {
 
     // The caller's own time entries only, for now — a "team view" for
     // holders of time.approve is a natural follow-up, not built yet.
-    findAllForUser(user: CurrentUserPayload, taskId?: string) {
+    // Includes the task title + project name so the web timeline can group
+    // and color-code entries without a second round-trip per task.
+    findAllForUser(user: CurrentUserPayload, query: FindTimeEntriesDto) {
         return this.prisma.timeEntry.findMany({
-            where: { userId: user.id, ...(taskId ? { taskId } : {}) },
+            where: {
+                userId: user.id,
+                ...(query.taskId ? { taskId: query.taskId } : {}),
+                ...(query.from || query.to
+                    ? {
+                          startedAt: {
+                              ...(query.from ? { gte: new Date(query.from) } : {}),
+                              ...(query.to ? { lte: new Date(query.to) } : {}),
+                          },
+                      }
+                    : {}),
+            },
+            include: { task: { select: { id: true, title: true, project: { select: { id: true, name: true } } } } },
             orderBy: { startedAt: 'desc' },
             take: 100,
         });
@@ -98,8 +136,8 @@ export class TimeEntriesService {
         return task;
     }
 
-    private stopEntry(id: string, startedAt: Date) {
-        const endedAt = new Date();
+    private stopEntry(id: string, startedAt: Date, explicitEndedAt?: Date) {
+        const endedAt = explicitEndedAt ?? new Date();
         return this.prisma.timeEntry.update({
             where: { id },
             data: {

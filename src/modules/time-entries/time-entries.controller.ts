@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { TimeEntriesService } from './time-entries.service.js';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto.js';
+import { StopTimeEntryDto } from './dto/stop-time-entry.dto.js';
+import { FindTimeEntriesDto } from './dto/find-time-entries.dto.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { EntitlementGuard } from '../../common/guards/entitlement.guard.js';
 import { RequireEntitlement } from '../../common/decorators/entitlement.decorator.js';
@@ -24,8 +26,14 @@ export class TimeEntriesController {
 
     @Post('time-entries/:id/stop')
     @SuccessMessage('Timer stopped.')
-    stop(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string) {
-        return this.timeEntriesService.stop(user, id);
+    stop(@CurrentUser() user: CurrentUserPayload, @Param('id') id: string, @Body() dto: StopTimeEntryDto) {
+        return this.timeEntriesService.stop(user, id, dto);
+    }
+
+    @Get('time-entries/me/current')
+    @SuccessMessage('Current timer retrieved.')
+    findCurrentForUser(@CurrentUser() user: CurrentUserPayload) {
+        return this.timeEntriesService.findCurrentForUser(user);
     }
 
     @Post('tasks/:id/time-entries')
@@ -40,8 +48,8 @@ export class TimeEntriesController {
 
     @Get('time-entries')
     @SuccessMessage('Time entries retrieved.')
-    findAllForUser(@CurrentUser() user: CurrentUserPayload, @Query('taskId') taskId?: string) {
-        return this.timeEntriesService.findAllForUser(user, taskId);
+    findAllForUser(@CurrentUser() user: CurrentUserPayload, @Query() query: FindTimeEntriesDto) {
+        return this.timeEntriesService.findAllForUser(user, query);
     }
 
     @Get('tasks/:id/time-entries')

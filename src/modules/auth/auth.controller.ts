@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
@@ -6,6 +6,7 @@ import { VerifyEmailDto } from './dto/verify-email.dto.js';
 import { ResendVerificationDto } from './dto/resend-verification.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { AcceptInviteDto } from './dto/accept-invite.dto.js';
+import { RefreshDto } from './dto/refresh.dto.js';
 import { SuccessMessage } from '../../common/decorators/success-message.decorator.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
@@ -14,6 +15,14 @@ import type { CurrentUserPayload } from '../../common/types/current-user.type.js
 const REFRESH_COOKIE = 'refreshToken';
 // Matches JWT_REFRESH_EXPIRY's default (7d) — keep these two in sync.
 const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A browser session carries its refresh token in an httpOnly cookie only —
+// deliberately invisible to page JS. The desktop app has no cookie jar of
+// its own, so it identifies itself with this header to also receive the
+// refresh token in the JSON body, which it stores itself (encrypted, via
+// Electron's safeStorage). Cookie behavior for the web client is unchanged.
+const DESKTOP_CLIENT_HEADER = 'x-client-type';
+const isDesktopClient = (value: string | undefined) => value === 'desktop';
 
 @Controller('auth')
 export class AuthController {
@@ -45,19 +54,28 @@ export class AuthController {
 
     @Post('login')
     @SuccessMessage('Login successful.')
-    async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    async login(
+        @Body() dto: LoginDto,
+        @Res({ passthrough: true }) res: Response,
+        @Headers(DESKTOP_CLIENT_HEADER) clientType?: string,
+    ) {
         const { accessToken, refreshToken, user } = await this.authService.login(dto);
         this.setRefreshCookie(res, refreshToken);
-        return { accessToken, user };
+        return { accessToken, user, ...(isDesktopClient(clientType) ? { refreshToken } : {}) };
     }
 
     @Post('refresh')
     @SuccessMessage('Session refreshed.')
-    async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-        const refreshToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE];
-        const tokens = await this.authService.refresh(refreshToken);
+    async refresh(
+        @Req() req: Request,
+        @Res({ passthrough: true }) res: Response,
+        @Body() dto: RefreshDto,
+        @Headers(DESKTOP_CLIENT_HEADER) clientType?: string,
+    ) {
+        const cookieToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE];
+        const tokens = await this.authService.refresh(cookieToken ?? dto.refreshToken);
         this.setRefreshCookie(res, tokens.refreshToken);
-        return { accessToken: tokens.accessToken };
+        return { accessToken: tokens.accessToken, ...(isDesktopClient(clientType) ? { refreshToken: tokens.refreshToken } : {}) };
     }
 
     @Get('me')

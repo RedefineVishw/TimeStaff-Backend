@@ -12,6 +12,8 @@ import { TasksModule } from './modules/tasks/tasks.module.js';
 import { TimeEntriesModule } from './modules/time-entries/time-entries.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { TeamsModule } from './modules/teams/teams.module.js';
+import { TrackingSettingsModule } from './modules/tracking-settings/tracking-settings.module.js';
+import { ScreenshotsModule } from './modules/screenshots/screenshots.module.js';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { TeamsModule } from './modules/teams/teams.module.js';
     TimeEntriesModule,
     NotificationsModule,
     TeamsModule,
+    TrackingSettingsModule,
+    ScreenshotsModule,
   ],
   controllers: [],
   providers: [],

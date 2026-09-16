@@ -11,7 +11,20 @@ async function bootstrap() {
   // read it, and `credentials: true` so the browser actually sends/accepts
   // cookies on cross-origin requests (frontend on :3000, backend on :5000).
   app.use(cookieParser());
-  app.enableCors({ origin: ['http://localhost:3000'], credentials: true });
+  app.enableCors({
+    // The desktop app's renderer also makes fetch/XHR calls and is subject
+    // to CORS like a browser tab — its origin is the Vite dev server in dev
+    // (http://localhost:5173 by default) and effectively none/"null" once
+    // packaged and loaded from a file:// URL, which shows up here as an
+    // undefined origin. Requests with no Origin header at all (native HTTP
+    // clients, curl, the desktop app's main process) always bypass CORS
+    // regardless of this list — this only affects renderer-process fetches.
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      const allowed = origin === undefined || origin === 'http://localhost:3000' || origin === 'http://localhost:5173';
+      callback(null, allowed);
+    },
+    credentials: true,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
