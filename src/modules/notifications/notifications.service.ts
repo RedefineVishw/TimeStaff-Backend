@@ -19,9 +19,17 @@ export class NotificationsService {
         return this.prisma.notification.create({ data: params });
     }
 
+    // The Inbox is task activity only — assignment, status changes,
+    // comments, mentions — not every internal event that happens to create
+    // a Notification row (e.g. manual-time-request submissions/approvals,
+    // which have their own dedicated views: the requester's "Manual Time
+    // Requests" tab and the reviewer's Approvals queue). Scoping by
+    // entityType: 'Task' rather than an allowlist of `type` strings means
+    // any future task-event type is included automatically, and anything
+    // else stays out without needing to remember to exclude it here.
     findAllForUser(user: CurrentUserPayload, isRead?: boolean) {
         return this.prisma.notification.findMany({
-            where: { userId: user.id, ...(isRead !== undefined ? { isRead } : {}) },
+            where: { userId: user.id, entityType: 'Task', ...(isRead !== undefined ? { isRead } : {}) },
             orderBy: { createdAt: 'desc' },
             take: 50,
         });
@@ -39,8 +47,12 @@ export class NotificationsService {
     }
 
     async markAllRead(user: CurrentUserPayload) {
+        // Scoped the same way as findAllForUser — "mark all as read" should
+        // only affect what the Inbox actually shows, not silently mark
+        // unrelated notifications (e.g. time-request events) as read behind
+        // the scenes when the user never saw them there.
         const result = await this.prisma.notification.updateMany({
-            where: { userId: user.id, isRead: false },
+            where: { userId: user.id, entityType: 'Task', isRead: false },
             data: { isRead: true },
         });
         return { count: result.count };

@@ -582,6 +582,10 @@ enum TimeRequestStatus {
   SUBMITTED
   APPROVED
   DENIED
+  // Withdrawn by the submitter themselves, before anyone reviewed it —
+  // distinct from DENIED (someone else rejected it) so "who acted on this"
+  // stays honest in the history.
+  CANCELLED
 }
 
 // A manually-entered time span awaiting sign-off before it counts as real

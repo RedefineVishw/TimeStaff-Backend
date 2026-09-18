@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { ProjectAccessService } from '../projects/project-access.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { CreateTimeEntryRequestDto } from './dto/create-time-entry-request.dto.js';
+import { UpdateTimeEntryRequestDto } from './dto/update-time-entry-request.dto.js';
 import { DenyTimeEntryRequestDto } from './dto/deny-time-entry-request.dto.js';
 import { FindTimeEntryRequestsDto } from './dto/find-time-entry-requests.dto.js';
 import type { CurrentUserPayload } from '../../common/types/current-user.type.js';
@@ -36,10 +37,11 @@ export class TimeEntryRequestsService {
 
     // Submitting is the same eligibility as manually logging time at all
     // (time.create) — the hierarchy only decides who *approves* it, not who
-    // can ask. An org admin's own submission needs no one's sign-off: it's
-    // created straight through as APPROVED, with the real TimeEntry already
-    // attached, so it still shows up in "my requests" for a consistent
-    // history instead of being invisible/special-cased there.
+    // can ask. The org admin is NOT an exception here: their own submission
+    // still goes through SUBMITTED like anyone else's, and they review and
+    // approve it themselves (see assertCanReview's admin carve-out below) —
+    // there's simply no one *above* them to ask, so they're the one who
+    // has to act on it, not someone who skips the step entirely.
     async create(user: CurrentUserPayload, taskId: string, dto: CreateTimeEntryRequestDto) {
         const task = await this.getLeafTaskOrThrow(taskId);
         await this.access.assertPermission(user, task.projectId, 'time.create');
@@ -48,32 +50,6 @@ export class TimeEntryRequestsService {
         const endedAt = new Date(dto.endedAt);
         if (endedAt <= startedAt) {
             throw new BadRequestException('endedAt must be after startedAt');
-        }
-
-        if (user.role?.name === ORG_ADMIN_ROLE_NAME) {
-            const timeEntry = await this.prisma.timeEntry.create({
-                data: {
-                    taskId,
-                    userId: user.id,
-                    startedAt,
-                    endedAt,
-                    durationSec: this.durationSec(startedAt, endedAt),
-                    note: dto.note,
-                },
-            });
-            return this.prisma.timeEntryRequest.create({
-                data: {
-                    taskId,
-                    userId: user.id,
-                    startedAt,
-                    endedAt,
-                    note: dto.note,
-                    status: 'APPROVED',
-                    reviewedBy: user.id,
-                    reviewedAt: new Date(),
-                    timeEntryId: timeEntry.id,
-                },
-            });
         }
 
         const request = await this.prisma.timeEntryRequest.create({
@@ -92,6 +68,50 @@ export class TimeEntryRequestsService {
         }
 
         return request;
+    }
+
+    // Only the submitter, and only while it's still SUBMITTED — once
+    // someone's reviewed it (or you've cancelled it yourself), the record
+    // needs to stay as-is for an honest history rather than being editable
+    // out from under whoever acted on it.
+    async update(user: CurrentUserPayload, id: string, dto: UpdateTimeEntryRequestDto) {
+        const request = await this.getRequestOrThrow(id);
+        if (request.userId !== user.id) {
+            throw new ForbiddenException('You can only edit your own requests');
+        }
+        if (request.status !== 'SUBMITTED') {
+            throw new BadRequestException('This request has already been reviewed and can no longer be edited');
+        }
+
+        const startedAt = dto.startedAt ? new Date(dto.startedAt) : request.startedAt;
+        const endedAt = dto.endedAt ? new Date(dto.endedAt) : request.endedAt;
+        if (endedAt <= startedAt) {
+            throw new BadRequestException('endedAt must be after startedAt');
+        }
+
+        return this.prisma.timeEntryRequest.update({
+            where: { id },
+            data: { startedAt, endedAt, note: dto.note ?? request.note },
+            include: { task: { select: { id: true, title: true, project: { select: { id: true, name: true } } } } },
+        });
+    }
+
+    // Withdrawing your own request — distinct from an approver denying it
+    // (see deny() below). Same "only while SUBMITTED" rule as update().
+    async cancel(user: CurrentUserPayload, id: string) {
+        const request = await this.getRequestOrThrow(id);
+        if (request.userId !== user.id) {
+            throw new ForbiddenException('You can only cancel your own requests');
+        }
+        if (request.status !== 'SUBMITTED') {
+            throw new BadRequestException('This request has already been reviewed and can no longer be cancelled');
+        }
+
+        return this.prisma.timeEntryRequest.update({
+            where: { id },
+            data: { status: 'CANCELLED' },
+            include: { task: { select: { id: true, title: true, project: { select: { id: true, name: true } } } } },
+        });
     }
 
     // The submitter's own history — every request they've ever made,
@@ -127,19 +147,77 @@ export class TimeEntryRequestsService {
         });
 
         if (isOrgAdmin) {
-            // An admin's own requests are auto-approved and never reach
-            // SUBMITTED, but guard anyway rather than assume that always holds.
-            return submitted.filter((r) => r.userId !== user.id);
+            // Includes the admin's own pending requests — no exception for
+            // them, they review and approve those themselves (see
+            // assertCanReview).
+            return submitted;
         }
 
         const eligible = [];
         for (const request of submitted) {
+            // Non-admins never approve their own — only the org admin gets
+            // that carve-out, handled by the branch above.
             if (request.userId === user.id) continue;
             if (await this.canApprove(user, request.task.projectId, request.userId)) {
                 eligible.push(request);
             }
         }
         return eligible;
+    }
+
+    // Whether this user has approval authority *anywhere* in the org — the
+    // org admin, or ranked Team Lead/PM on at least one project. Purely for
+    // gating the Approvals page/nav item client-side so a regular employee
+    // never sees an approve/deny UI at all (even one that would just show
+    // "nothing to review" for them) — the real approve()/deny() endpoints
+    // above independently re-check eligibility per request regardless.
+    async canApproveAnything(user: CurrentUserPayload): Promise<boolean> {
+        if (user.role?.name === ORG_ADMIN_ROLE_NAME) {
+            return true;
+        }
+        const memberships = await this.prisma.projectMember.findMany({
+            where: { userId: user.id },
+            include: { role: true },
+        });
+        return memberships.some((m) => (ROLE_RANK[m.role.name] ?? 0) >= ROLE_RANK.TEAM_LEAD);
+    }
+
+    // Everything within this approver's scope — every status, not just
+    // SUBMITTED — so the Approval Requests dashboard can show real totals
+    // (pending/approved/denied across everyone they outrank, or everyone in
+    // the org if they're the admin) alongside how many of those *they*
+    // personally reviewed. Optionally narrowed to one submitter for the
+    // "select a particular person" filter. Same N+1-per-request membership
+    // check as findPendingForApprover — fine at this scale, see that method's
+    // note.
+    async findAllInScope(user: CurrentUserPayload, submitterId?: string) {
+        const isOrgAdmin = user.role?.name === ORG_ADMIN_ROLE_NAME;
+        const all = await this.prisma.timeEntryRequest.findMany({
+            where: {
+                task: { project: { organizationId: user.organizationId ?? undefined } },
+                ...(submitterId ? { userId: submitterId } : {}),
+            },
+            include: {
+                task: { select: { id: true, title: true, projectId: true, project: { select: { id: true, name: true } } } },
+                user: { select: { id: true, firstName: true, lastName: true, email: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        if (isOrgAdmin) {
+            // Includes the admin's own requests — same reasoning as
+            // findPendingForApprover above.
+            return all;
+        }
+
+        const inScope = [];
+        for (const request of all) {
+            if (request.userId === user.id) continue;
+            if (await this.canApprove(user, request.task.projectId, request.userId)) {
+                inScope.push(request);
+            }
+        }
+        return inScope;
     }
 
     async approve(user: CurrentUserPayload, id: string) {
@@ -198,7 +276,10 @@ export class TimeEntryRequestsService {
         if (request.status !== 'SUBMITTED') {
             throw new BadRequestException('This request has already been reviewed');
         }
-        if (request.userId === user.id) {
+        // Nobody approves their own request — except the org admin, who has
+        // no exception here: there's no one above them, so approving their
+        // own submission is the only way it ever gets approved at all.
+        if (request.userId === user.id && user.role?.name !== ORG_ADMIN_ROLE_NAME) {
             throw new ForbiddenException("You can't approve your own request");
         }
         const task = await this.prisma.task.findUnique({ where: { id: request.taskId } });
@@ -212,9 +293,11 @@ export class TimeEntryRequestsService {
     }
 
     // Is `approver` ranked above `submitterId` within this project? Org
-    // admin always is. Everyone else needs an actual ProjectMember row on
-    // both sides — no membership on either side means no comparison is
-    // possible, so it fails closed (not approvable).
+    // admin always is (unconditionally — including reviewing another
+    // admin's or their own request: rank 4 has nothing above it, so
+    // "above the submitter" isn't a meaningful bar for them to clear).
+    // Everyone else needs an actual ProjectMember row on their own side —
+    // no membership means no comparison is possible, fails closed.
     private async canApprove(approver: CurrentUserPayload, projectId: string, submitterId: string): Promise<boolean> {
         if (approver.role?.name === ORG_ADMIN_ROLE_NAME) {
             return true;
@@ -224,18 +307,38 @@ export class TimeEntryRequestsService {
         if (!approverMembership) return false;
         const approverRank = ROLE_RANK[approverMembership.role.name] ?? 0;
 
-        const submitterMembership = await this.access.getMembership(submitterId, projectId);
-        const submitterRank = submitterMembership ? (ROLE_RANK[submitterMembership.role.name] ?? 1) : 1;
-
+        const submitterRank = await this.getSubmitterRank(projectId, submitterId);
         return approverRank > submitterRank;
+    }
+
+    // The submitter's rank for hierarchy comparisons — checks their
+    // org-wide role first (an ORGANIZATION_ADMIN is rank 4 regardless of
+    // whether they even have a ProjectMember row, which they often don't),
+    // falling back to their project-scoped ProjectMember role, and finally
+    // to the bottom rung if they have neither. Without the org-admin check
+    // first, an admin submitting a request with no ProjectMember row would
+    // fall through to "no membership = rank 1", wrongly letting a Team Lead
+    // or PM "outrank" and approve an admin's own request.
+    private async getSubmitterRank(projectId: string, submitterId: string): Promise<number> {
+        const submitterUser = await this.prisma.user.findUnique({
+            where: { id: submitterId },
+            include: { role: true },
+        });
+        if (submitterUser?.role?.name === ORG_ADMIN_ROLE_NAME) {
+            return ROLE_RANK.ORGANIZATION_ADMIN;
+        }
+
+        const membership = await this.access.getMembership(submitterId, projectId);
+        return membership ? (ROLE_RANK[membership.role.name] ?? 1) : 1;
     }
 
     // Every user this project's submitter's request should notify: org
     // admins (org-wide, no ProjectMember row needed) plus any project
-    // member ranked above the submitter.
+    // member ranked above the submitter. Never the submitter themselves,
+    // even if they're an admin — that self-notification would be noise,
+    // not a missing approver (they'll see it in their own pending queue).
     private async getEligibleApproverIds(projectId: string, submitter: CurrentUserPayload): Promise<string[]> {
-        const submitterMembership = await this.access.getMembership(submitter.id, projectId);
-        const submitterRank = submitterMembership ? (ROLE_RANK[submitterMembership.role.name] ?? 1) : 1;
+        const submitterRank = await this.getSubmitterRank(projectId, submitter.id);
 
         const [admins, members] = await Promise.all([
             this.prisma.user.findMany({
@@ -251,8 +354,9 @@ export class TimeEntryRequestsService {
         const higherRankedMemberIds = members
             .filter((m) => m.userId !== submitter.id && (ROLE_RANK[m.role.name] ?? 0) > submitterRank)
             .map((m) => m.userId);
+        const adminIds = admins.map((a) => a.id).filter((id) => id !== submitter.id);
 
-        return [...new Set([...admins.map((a) => a.id), ...higherRankedMemberIds])];
+        return [...new Set([...adminIds, ...higherRankedMemberIds])];
     }
 
     private durationSec(startedAt: Date, endedAt: Date): number {
